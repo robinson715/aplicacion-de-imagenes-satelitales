@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Mar  5 11:14:51 2025
-
-@author: robin
+Módulo para generar y ejecutar consultas a la API de LandsatLook
 """
 
 import requests
@@ -11,19 +9,7 @@ import json
 import geopandas as gpd
 
 def generate_landsat_query(file_path, start_date, end_date, cloud_cover=5, platform=["LANDSAT_8"], collections=["landsat-c2l2-sr"], limit=100):
-    """
-    Generates a query for the LandsatLook API from a GeoJSON or Shapefile.
-
-    :param file_path: Path to the GeoJSON or Shapefile.
-    :param start_date: Start date in 'YYYY-MM-DD' format.
-    :param end_date: End date in 'YYYY-MM-DD' format.
-    :param cloud_cover: Maximum cloud cover percentage (default is 5%).
-    :param platform: List of Landsat platforms (default is ['LANDSAT_8']).
-    :param collections: List of Landsat collections (default is ['landsat-c2l2-sr']).
-    :param limit: Maximum number of results per page (default is 100).
-    :return: Dictionary with the generated query.
-    """  
-
+     
     # Cargar el archivo en un GeoDataFrame
     gdf = gpd.read_file(file_path)
     
@@ -48,9 +34,13 @@ def generate_landsat_query(file_path, start_date, end_date, cloud_cover=5, platf
 
 def fetch_stac_server(query):
     """
-    Queries the stac-server (STAC) backend.
-    This function handles pagination.
-    query is a python dictionary to pass as json to the request.
+    Consulta el servidor STAC (LandsatLook) con manejo de paginación.
+    
+    Args:
+        query: Diccionario Python para enviar como JSON en la petición
+        
+    Returns:
+        list: Lista de características (imágenes) encontradas
     """
     headers = {
         "Content-Type": "application/json",
@@ -58,16 +48,18 @@ def fetch_stac_server(query):
         "Accept": "application/geo+json",
     }
 
-    url = f"https://landsatlook.usgs.gov/stac-server/search"
+    url = "https://landsatlook.usgs.gov/stac-server/search"
     data = requests.post(url, headers=headers, json=query).json()
     error = data.get("message", "")
     if error:
-        raise Exception(f"STAC-Server failed and returned: {error}")
+        raise Exception(f"STAC-Server falló y devolvió: {error}")
 
     context = data.get("context", {})
     if not context.get("matched"):
         return []
-    print(context)
+        
+    # Mostrar solo información relevante sobre los resultados
+    print(f"Resultados: {context.get('matched')} imágenes, {context.get('returned')} en esta página")
 
     features = data["features"]
     if data["links"]:
@@ -77,3 +69,4 @@ def fetch_stac_server(query):
         features = list(itertools.chain(features, fetch_stac_server(query)))
 
     return features
+
