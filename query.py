@@ -8,7 +8,8 @@ import itertools
 import json
 import geopandas as gpd
 
-def generate_landsat_query(file_path, start_date, end_date, cloud_cover=5, platform=["LANDSAT_8"], collections=["landsat-c2l2-sr"], limit=100):
+def generate_landsat_query(file_path, start_date, end_date, cloud_cover=5, platform=["LANDSAT_8"], 
+                           collections=["landsat-c2l2-sr"], limit=100, path=None, row=None):
      
     # Cargar el archivo en un GeoDataFrame
     gdf = gpd.read_file(file_path)
@@ -29,6 +30,13 @@ def generate_landsat_query(file_path, start_date, end_date, cloud_cover=5, platf
         "page": 1,
         "limit": limit
     }
+    
+    # Añadir filtros de path y row si se especifican
+    if path is not None and path.strip():
+        query["query"]["landsat:wrs_path"] = int(path)
+    
+    if row is not None and row.strip():
+        query["query"]["landsat:wrs_row"] = int(row)
     
     return query
 

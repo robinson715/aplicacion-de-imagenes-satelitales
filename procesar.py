@@ -9,6 +9,7 @@ import traceback
 from query import generate_landsat_query, fetch_stac_server
 from downloader import download_images, download_selective_bands
 from indices import process_selected_indices
+from cobertura import analyze_coverage, visualize_coverage, download_optimal_scenes
 
 def determine_required_bands(selected_indices):
    
@@ -116,62 +117,122 @@ def process_data():
         print(f"\nSe encontraron {len(features)} imágenes que cumplen con los criterios.")
         
         # 6. Mostrar información de las imágenes encontradas
-        for i, feature in enumerate(features[:3]):  # Mostrar solo las 3 primeras
+        print("\nInformación de las imágenes encontradas (hasta 60):")
+        print("-" * 100)
+        print(f"{'#':<4}{'ID':<50}{'Fecha':<15}{'Nubes':<10}{'Path':<8}{'Row':<6}")
+        print("-" * 100)
+        
+        max_scenes_to_show = min(60, len(features))
+        for i, feature in enumerate(features[:max_scenes_to_show]):
             img_id = feature.get('id', 'Desconocido')
             properties = feature.get('properties', {})
             cloud = properties.get('eo:cloud_cover', 'N/A')
-            date = properties.get('datetime', 'Fecha desconocida')
+            date = properties.get('datetime', 'Fecha desconocida')[:10]  # Solo la parte de fecha
+            path = properties.get('landsat:wrs_path', 'N/A')
+            row = properties.get('landsat:wrs_row', 'N/A')
             
-            print(f"Imagen {i+1}: {img_id} - {date[:10]} - Nubes: {cloud}%")
+            print(f"{i+1:<4}{img_id:<50}{date:<15}{cloud:<10.2f}{path:<8}{row:<6}")
         
-        if len(features) > 3:
-            print(f"... y {len(features) - 3} imágenes más.")
+        if len(features) > max_scenes_to_show:
+            print(f"\nSe omitieron {len(features) - max_scenes_to_show} imágenes adicionales.")
         
-        # 7. Descargar la primera imagen
+        # 7. Analizar cobertura y descargar las escenas necesarias
         if len(features) > 0:
-            print("\nDescargando imágenes...")
+            print("\nAnalizando cobertura del polígono...")
             
-            # Si hay índices seleccionados, determinar las bandas necesarias
-            if selected_indices:
-                required_bands = determine_required_bands(selected_indices)
-                print(f"Bandas necesarias para los índices: {', '.join(required_bands)}")
+            # Analizar la cobertura
+            coverage_info = analyze_coverage(file_path, features)
+            
+            print(f"Cobertura total: {coverage_info['total_coverage_percent']:.2f}%")
+            print(f"Se necesitan {len(coverage_info['scenes_needed'])} escenas para cubrir el polígono")
+            
+            # Generar visualización de cobertura
+            coverage_map = visualize_coverage(file_path, features)
+            print(f"Mapa de cobertura generado: {coverage_map}")
+            
+            # Preguntar al usuario si desea descargar todas las escenas necesarias
+            user_input = input("\n¿Descargar todas las escenas necesarias? (s/n): ")
+            
+            if user_input.lower() == 's':
+                # Descargar todas las escenas necesarias
+                print("\nDescargando las escenas necesarias...")
+                download_path = "data/downloads/complete_coverage"
+                os.makedirs(download_path, exist_ok=True)
                 
-                # Descargar sólo las bandas necesarias
-                base_path = download_selective_bands(features[0], required_bands)
+                downloaded_files = download_optimal_scenes(file_path, features, download_path)
                 
-                if base_path:
-                    print("Descarga completada. Calculando índices...")
-                    # Procesar los índices
-                    results = process_selected_indices(base_path, selected_indices)
-                    print(f"Se calcularon {len(results)} índices: {', '.join(results.keys())}")
+                if downloaded_files:
+                    print(f"\nSe descargaron {len(downloaded_files)} escenas con éxito")
+                    
+                    # Si hay índices seleccionados, procesarlos para cada escena
+                    if selected_indices:
+                        print("\nCalculando índices para cada escena...")
+                        for scene_dir in downloaded_files:
+                            # Encontrar archivos descargados
+                            files = [f for f in os.listdir(scene_dir) if f.endswith('.TIF')]
+                            if not files:
+                                print(f"No se encontraron archivos TIF en {scene_dir}")
+                                continue
+                            
+                            # Determinar el nombre base para esta escena (sin extensión ni sufijo de banda)
+                            base_file = files[0]
+                            # Eliminar el sufijo de banda (por ejemplo, "_B1")
+                            band_suffix = "_B1"
+                            if band_suffix in base_file:
+                                base_name = base_file[:base_file.find(band_suffix)]
+                                base_path = os.path.join(scene_dir, base_name)
+                                print(f"Usando archivo base: {base_path}")
+                                
+                                # Comprobar que las bandas necesarias existen
+                                required_bands = determine_required_bands(selected_indices)
+                                missing_bands = []
+                                
+                                for band in required_bands:
+                                    band_file = f"{base_path}_{band}.TIF"
+                                    if not os.path.exists(band_file):
+                                        print(f"Advertencia: La banda {band} no está disponible en {band_file}")
+                                        missing_bands.append(band)
+                                
+                                if missing_bands:
+                                    print(f"Faltan bandas necesarias para calcular los índices: {', '.join(missing_bands)}")
+                                    continue
+                                
+                                # Procesar índices
+                                try:
+                                    results = process_selected_indices(base_path, selected_indices)
+                                    print(f"Índices calculados para {os.path.basename(scene_dir)}")
+                                except Exception as e:
+                                    print(f"Error al procesar índices para {os.path.basename(scene_dir)}: {str(e)}")
+                                    traceback.print_exc()
+                            else:
+                                print(f"No se pudo determinar el nombre base del archivo: {base_file}")
+                    
                     return True
                 else:
-                    print("Error al descargar las bandas necesarias")
+                    print("Error al descargar las escenas necesarias")
                     return False
             else:
-                # Si no hay índices seleccionados, descargar solo una banda (B4)
-                print("No hay índices seleccionados. Descargando solo banda B4 (roja)...")
-                success = download_images([features[0]], band="B4")
-                
-                if success:
-                    print("Descarga completada")
-                    return True
+                # Descargar solo la primera escena (comportamiento original)
+                print("\nDescargando solo la primera escena...")
+                if selected_indices:
+                    required_bands = determine_required_bands(selected_indices)
+                    base_path = download_selective_bands(features[0], required_bands)
+                    
+                    if base_path:
+                        try:
+                            results = process_selected_indices(base_path, selected_indices)
+                            return True
+                        except Exception as e:
+                            print(f"Error al procesar índices: {str(e)}")
+                            traceback.print_exc()
+                            return False
+                    else:
+                        return False
                 else:
-                    print("Error al descargar la imagen")
-                    return False
-        
-        return True
-        
+                    success = download_images([features[0]], band="B4")
+                    return success
+                    
     except Exception as e:
-        print(f"Error: {str(e)}")
-        print(traceback.format_exc())
+        print(f"Error durante el procesamiento: {str(e)}")
+        traceback.print_exc()
         return False
-
-if __name__ == "__main__":
-    # Ejecutar el procesamiento directamente si se llama como script
-    success = process_data()
-    if success:
-        print("Procesamiento completado con éxito")
-    else:
-        print("El procesamiento falló")
-

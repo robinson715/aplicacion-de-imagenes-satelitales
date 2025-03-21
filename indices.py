@@ -82,8 +82,15 @@ def read_band(file_path):
     Returns:
         numpy.ndarray: Datos de la banda
     """
-    with rasterio.open(file_path) as dataset:
-        return dataset.read(1).astype(np.float32)
+    import os
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"El archivo {file_path} no existe")
+    
+    try:
+        with rasterio.open(file_path) as dataset:
+            return dataset.read(1).astype(np.float32)
+    except Exception as e:
+        raise IOError(f"Error al leer el archivo {file_path}: {str(e)}")
 
 def calculate_ndvi(nir_band, red_band):
     """
