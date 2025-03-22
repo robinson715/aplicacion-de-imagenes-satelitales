@@ -121,7 +121,7 @@ def process_data():
         print("-" * 100)
         print(f"{'#':<4}{'ID':<50}{'Fecha':<15}{'Nubes':<10}{'Path':<8}{'Row':<6}")
         print("-" * 100)
-        
+
         max_scenes_to_show = min(60, len(features))
         for i, feature in enumerate(features[:max_scenes_to_show]):
             img_id = feature.get('id', 'Desconocido')
@@ -132,7 +132,7 @@ def process_data():
             row = properties.get('landsat:wrs_row', 'N/A')
             
             print(f"{i+1:<4}{img_id:<50}{date:<15}{cloud:<10.2f}{path:<8}{row:<6}")
-        
+
         if len(features) > max_scenes_to_show:
             print(f"\nSe omitieron {len(features) - max_scenes_to_show} imágenes adicionales.")
         
@@ -159,54 +159,11 @@ def process_data():
                 download_path = "data/downloads/complete_coverage"
                 os.makedirs(download_path, exist_ok=True)
                 
-                downloaded_files = download_optimal_scenes(file_path, features, download_path)
+                # Pasar los índices seleccionados a download_optimal_scenes
+                downloaded_files = download_optimal_scenes(file_path, features, download_path, selected_indices)
                 
                 if downloaded_files:
                     print(f"\nSe descargaron {len(downloaded_files)} escenas con éxito")
-                    
-                    # Si hay índices seleccionados, procesarlos para cada escena
-                    if selected_indices:
-                        print("\nCalculando índices para cada escena...")
-                        for scene_dir in downloaded_files:
-                            # Encontrar archivos descargados
-                            files = [f for f in os.listdir(scene_dir) if f.endswith('.TIF')]
-                            if not files:
-                                print(f"No se encontraron archivos TIF en {scene_dir}")
-                                continue
-                            
-                            # Determinar el nombre base para esta escena (sin extensión ni sufijo de banda)
-                            base_file = files[0]
-                            # Eliminar el sufijo de banda (por ejemplo, "_B1")
-                            band_suffix = "_B1"
-                            if band_suffix in base_file:
-                                base_name = base_file[:base_file.find(band_suffix)]
-                                base_path = os.path.join(scene_dir, base_name)
-                                print(f"Usando archivo base: {base_path}")
-                                
-                                # Comprobar que las bandas necesarias existen
-                                required_bands = determine_required_bands(selected_indices)
-                                missing_bands = []
-                                
-                                for band in required_bands:
-                                    band_file = f"{base_path}_{band}.TIF"
-                                    if not os.path.exists(band_file):
-                                        print(f"Advertencia: La banda {band} no está disponible en {band_file}")
-                                        missing_bands.append(band)
-                                
-                                if missing_bands:
-                                    print(f"Faltan bandas necesarias para calcular los índices: {', '.join(missing_bands)}")
-                                    continue
-                                
-                                # Procesar índices
-                                try:
-                                    results = process_selected_indices(base_path, selected_indices)
-                                    print(f"Índices calculados para {os.path.basename(scene_dir)}")
-                                except Exception as e:
-                                    print(f"Error al procesar índices para {os.path.basename(scene_dir)}: {str(e)}")
-                                    traceback.print_exc()
-                            else:
-                                print(f"No se pudo determinar el nombre base del archivo: {base_file}")
-                    
                     return True
                 else:
                     print("Error al descargar las escenas necesarias")

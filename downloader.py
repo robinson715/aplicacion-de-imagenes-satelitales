@@ -114,8 +114,23 @@ def download_images(features, download_path="data/downloads", band="B4"):
 def download_selective_bands(feature, required_bands, download_path="data/downloads"):
     """
     Descarga solo las bandas específicas de una imagen Landsat.
+    
+    Args:
+        feature: Característica (feature) de Landsat
+        required_bands: Lista de bandas requeridas (e.g., ["B2", "B4", "B5"])
+        download_path: Ruta donde guardar las imágenes descargadas
+        
+    Returns:
+        str: Ruta base para los archivos descargados, o None si falló
     """
+    import os
+    import requests
+    from config import USGS_USERNAME, USGS_PASSWORD
+    
     os.makedirs(download_path, exist_ok=True)
+    
+    # Iniciar sesión en USGS
+    from downloader import login_usgs
     session = login_usgs()
     
     # Verificar si tiene assets
@@ -123,50 +138,121 @@ def download_selective_bands(feature, required_bands, download_path="data/downlo
         print(f"Error: La imagen {feature.get('id', 'desconocida')} no tiene la clave 'assets'")
         return None
     
-    # Encontrar una URL base para las bandas
-    base_url = None
-    for asset_key in ['sr', 'surface_reflectance', 'reflectance']:
-        if asset_key in feature['assets'] and 'href' in feature['assets'][asset_key]:
-            base_url = feature['assets'][asset_key]['href']
-            break
+    # Obtener ID de la escena
+    scene_id = feature.get('id', 'unknown')
+    print(f"Descargando bandas {', '.join(required_bands)} para la escena {scene_id}")
     
-    if not base_url:
-        # Si no hay URL específica, usar la primera disponible
-        for asset_key, asset_data in feature['assets'].items():
-            if 'href' in asset_data:
-                base_url = asset_data['href']
-                break
+    # Mostrar los assets disponibles para diagnóstico
+    print(f"Assets disponibles: {', '.join(feature['assets'].keys())}")
     
-    if not base_url:
-        print("No se pudo encontrar una URL base para descargar las bandas")
-        return None
+    # Determinar la ruta base para los archivos
+    base_path = os.path.join(download_path, scene_id.split('_SR')[0])
     
-    # Obtener el ID de la imagen desde la URL
-    image_id = os.path.basename(base_url).split('_')[0]
-    base_path = os.path.join(download_path, image_id)
+    # Bandera para verificar si todas las descargas fueron exitosas
+    all_successful = True
+    downloaded_bands = []
     
+    # Intentar diferentes estrategias para encontrar y descargar cada banda
     for band in required_bands:
-        # Construir URL específica para cada banda (adaptable a diferentes formatos de nombre)
-        band_url = None
-        if base_url.lower().endswith('.tif'):
-            # Si termina en .tif, sustituir la extensión
-            band_url = base_url.replace(".tif", f"_{band}.TIF").replace(".TIF", f"_{band}.TIF")
-        else:
-            # En otro caso, simplemente añadir la banda
-            band_url = f"{base_url}_{band}.TIF"
+        band_found = False
         
-        file_name = os.path.join(download_path, os.path.basename(band_url))
+        # Lista de posibles variantes para cada banda
+        band_variants = [
+            band,                     # Ejemplo: "B4"
+            band.lower(),             # Ejemplo: "b4"
+            f"band{band[1:]}",        # Ejemplo: "band4"
+            f"band_{band[1:]}",       # Ejemplo: "band_4"
+            f"sr_{band.lower()}",     # Ejemplo: "sr_b4"
+            f"{band.lower()}"         # Ejemplo: "b4"
+        ]
         
+        # Buscar la banda en todas sus variantes
+        for variant in band_variants:
+            if variant in feature['assets'] and 'href' in feature['assets'][variant]:
+                download_url = feature['assets'][variant]['href']
+                print(f"Encontrada banda {band} como '{variant}'")
+                band_found = True
+                break
+        
+        # Si no se encontró por nombre exacto, buscar cualquier asset que contenga el nombre de la banda
+        if not band_found:
+            for asset_key, asset_info in feature['assets'].items():
+                if 'href' in asset_info and band.lower() in asset_key.lower():
+                    download_url = asset_info['href']
+                    print(f"Encontrada banda {band} en asset '{asset_key}'")
+                    band_found = True
+                    break
+        
+        # Si aún no se encuentra, intentar con otros patrones conocidos
+        if not band_found:
+            # Para Landsat, a veces las bandas están en URLs que siguen patrones específicos
+            # Intentar construir la URL basada en otra URL conocida
+            base_url = None
+            
+            # Buscar cualquier URL de asset que podamos usar como base
+            for asset_key, asset_info in feature['assets'].items():
+                if 'href' in asset_info and asset_info['href'].lower().endswith('.tif'):
+                    base_url = asset_info['href']
+                    break
+            
+            if base_url:
+                # Intentar deducir el patrón de nombrado
+                for pattern in [
+                    lambda url, b: url.replace(url.split('_')[-1], f"{b}.TIF"),  # Reemplazar último segmento
+                    lambda url, b: url.replace(url.split('_')[-1].split('.')[0], b)  # Reemplazar solo el nombre de banda
+                ]:
+                    try:
+                        test_url = pattern(base_url, band)
+                        # Verificar si la URL existe con una solicitud HEAD
+                        head_response = session.head(test_url)
+                        if head_response.status_code == 200:
+                            download_url = test_url
+                            print(f"Deducida URL para banda {band}: {download_url}")
+                            band_found = True
+                            break
+                    except:
+                        pass
+        
+        # Si no se pudo encontrar la banda, registrar el error
+        if not band_found:
+            print(f"Error: No se pudo encontrar la banda {band} en los assets disponibles")
+            all_successful = False
+            continue
+        
+        # Crear el nombre del archivo local
+        file_name = os.path.join(download_path, f"{scene_id.split('_SR')[0]}_{band}.TIF")
+        print(f"Descargando: {os.path.basename(file_name)}")
+
         try:
-            # Descargar la banda con autenticación
-            with session.get(band_url, stream=True) as response:
+            # Descargar la imagen con autenticación
+            with session.get(download_url, stream=True) as response:
                 response.raise_for_status()
+                total_size = int(response.headers.get('content-length', 0))
+                
                 with open(file_name, 'wb') as file:
+                    downloaded = 0
                     for chunk in response.iter_content(chunk_size=8192):
                         file.write(chunk)
-            print(f"Descargada banda {band}: {file_name}")
+                        downloaded += len(chunk)
+                        # Mostrar progreso cada 20%
+                        if total_size > 0 and downloaded % (total_size // 5) < 8192:
+                            percent = (downloaded / total_size) * 100
+                            print(f"Progreso: {percent:.1f}%")
+            
+            print(f"Descargado: {file_name}")
+            downloaded_bands.append(band)
         except Exception as e:
             print(f"Error al descargar la banda {band}: {str(e)}")
+            all_successful = False
     
-    return base_path
-
+    # Verificar que se descargaron todas las bandas requeridas
+    if all_successful:
+        print(f"Se descargaron todas las bandas requeridas: {', '.join(downloaded_bands)}")
+        return base_path
+    elif downloaded_bands:
+        print(f"Advertencia: Solo se descargaron algunas bandas: {', '.join(downloaded_bands)}")
+        print(f"Faltan las bandas: {', '.join(set(required_bands) - set(downloaded_bands))}")
+        return base_path  # Devolver la ruta base para las bandas que sí se pudieron descargar
+    else:
+        print("Error: No se pudo descargar ninguna banda")
+        return None

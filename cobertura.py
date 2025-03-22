@@ -442,7 +442,7 @@ def analyze_coverage(polygon_file, features):
     }
 
 
-def visualize_coverage(polygon_file, features, output_file='coverage_map.png', selected_scenes=None):
+def visualize_coverage(polygon_file, features, output_file='coverage_map.png', selected_scenes=None, coverage_percent=None):
     """
     Genera una visualización de la cobertura del polígono por las escenas Landsat.
     
@@ -451,6 +451,7 @@ def visualize_coverage(polygon_file, features, output_file='coverage_map.png', s
         features: Lista de características (features) de Landsat
         output_file: Ruta para guardar la imagen de visualización
         selected_scenes: Lista opcional de escenas seleccionadas para destacar
+        coverage_percent: Porcentaje de cobertura total (opcional)
         
     Returns:
         str: Ruta al archivo de visualización generado
@@ -592,7 +593,14 @@ def visualize_coverage(polygon_file, features, output_file='coverage_map.png', s
     
     # Título y configuración
     if selected_scenes:
-        ax.set_title(f'Cobertura optimizada: {len(selected_scenes)} escenas ({coverage_info["total_coverage_percent"]:.1f}% de cobertura)', fontsize=14)
+        # Usar el valor de cobertura proporcionado o calcular un estimado
+        if coverage_percent is not None:
+            coverage_value = coverage_percent
+        else:
+            # Estimación aproximada si no se proporciona
+            coverage_value = min(100, len(selected_scenes) * 2.5)  # Suponemos ~2.5% por escena en promedio
+            
+        ax.set_title(f'Cobertura optimizada: {len(selected_scenes)} escenas ({coverage_value:.1f}% de cobertura)', fontsize=14)
     else:
         ax.set_title('Cobertura del polígono con escenas Landsat disponibles', fontsize=14)
     
@@ -640,7 +648,7 @@ def visualize_coverage(polygon_file, features, output_file='coverage_map.png', s
         
         info_text = (
             f"Escenas seleccionadas: {len(selected_scenes)}\n"
-            f"Cobertura total: {coverage_info['total_coverage_percent']:.2f}%\n"
+            f"Cobertura total: {coverage_value:.2f}%\n"
             f"Rango de fechas: {date_range}\n"
             f"Diferencia temporal: {date_diff}\n"
             f"Nubosidad promedio: {sum(s['cloud_cover'] for s in selected_scenes) / len(selected_scenes):.2f}%"
@@ -657,34 +665,53 @@ def visualize_coverage(polygon_file, features, output_file='coverage_map.png', s
     return output_file
 
 
-def download_optimal_scenes(polygon_file, features, download_path='data/downloads'):
+def download_optimal_scenes(polygon_file, features, download_path='data/downloads', selected_indices=None):
     """
-    Descarga el conjunto óptimo de escenas para cubrir completamente el polígono.
+    Descarga el conjunto óptimo de escenas para cubrir completamente el polígono,
+    incluyendo todas las bandas necesarias para los índices seleccionados.
     
     Args:
         polygon_file: Ruta al archivo GeoJSON o Shapefile del polígono
         features: Lista de características (features) de Landsat
         download_path: Ruta donde guardar las imágenes descargadas
+        selected_indices: Lista de índices seleccionados para calcular
         
     Returns:
         list: Lista de rutas a las imágenes descargadas
     """
     import os
     
-    # Analizar la cobertura con el nuevo algoritmo optimizado
+    # Determinar las bandas necesarias para los índices seleccionados
+    required_bands = []
+    
+    if selected_indices:
+        from procesar import determine_required_bands
+        required_bands = determine_required_bands(selected_indices)
+        print(f"\nÍndices seleccionados: {', '.join(selected_indices)}")
+        print(f"Bandas requeridas: {', '.join(required_bands)}")
+    else:
+        print("\nNo se seleccionaron índices. Se descargará solo la banda B1 por defecto.")
+        required_bands = ["B1"]
+    
+    # Analizar la cobertura con el algoritmo optimizado
     coverage_info = analyze_coverage(polygon_file, features)
     
     # Obtener las escenas necesarias para la cobertura óptima
     scenes_needed = coverage_info['scenes_needed']
+    total_coverage = coverage_info['total_coverage_percent']
     
     if not scenes_needed:
         print("No se encontraron escenas que cubran el polígono de interés.")
         return []
     
     # Generar visualización con las escenas seleccionadas
-    visualization_path = visualize_coverage(polygon_file, features, 
-                                           selected_scenes=scenes_needed, 
-                                           output_file='coverage_map.png')
+    visualization_path = visualize_coverage(
+        polygon_file, 
+        features, 
+        selected_scenes=scenes_needed, 
+        coverage_percent=total_coverage,
+        output_file='coverage_map.png'
+    )
     print(f"Mapa de cobertura generado: {visualization_path}")
     
     # Imprimir información de las escenas necesarias
@@ -693,11 +720,8 @@ def download_optimal_scenes(polygon_file, features, download_path='data/download
         print(f"{i+1}. {scene['id']} - Path {scene['path']}/Row {scene['row']} - "
               f"Fecha: {scene['date']} - Cobertura: {scene['coverage_percent']:.2f}%")
     
-    # Importar la función de descarga
-    from downloader import download_images
-    
-    # Descargar cada escena necesaria
-    downloaded_files = []
+    # Descargar cada escena necesaria con todas las bandas requeridas
+    downloaded_scenes = []
     
     for i, scene_info in enumerate(scenes_needed):
         # Buscar la característica correspondiente en la lista original
@@ -716,15 +740,60 @@ def download_optimal_scenes(polygon_file, features, download_path='data/download
             scene_dir = os.path.join(download_path, f"scene_{scene_info['path']}_{scene_info['row']}")
             os.makedirs(scene_dir, exist_ok=True)
             
-            # Descargar la escena
-            success = download_images([target_feature], download_path=scene_dir)
+            # Importar la función para descargas selectivas
+            from downloader import download_selective_bands
             
-            if success:
-                print(f"Escena {scene_id} descargada correctamente")
-                downloaded_files.append(scene_dir)
+            # Descargar todas las bandas requeridas
+            base_path = download_selective_bands(target_feature, required_bands, download_path=scene_dir)
+            
+            if base_path:
+                print(f"Escena {scene_id} descargada correctamente con todas las bandas requeridas")
+                downloaded_scenes.append({
+                    'scene_dir': scene_dir,
+                    'base_path': base_path,
+                    'scene_id': scene_id
+                })
             else:
                 print(f"Error al descargar la escena {scene_id}")
         else:
             print(f"No se encontró la característica correspondiente a {scene_id}")
     
-    return downloaded_files
+    # Si hay índices seleccionados, procesarlos para cada escena
+    if selected_indices and downloaded_scenes:
+        print("\nCalculando índices para cada escena descargada...")
+        from indices import process_selected_indices
+        
+        for scene_data in downloaded_scenes:
+            try:
+                print(f"\nProcesando índices para {scene_data['scene_id']}...")
+                
+                # Verificar que todas las bandas están disponibles
+                missing_bands = []
+                for band in required_bands:
+                    band_file = f"{scene_data['base_path']}_{band}.TIF"
+                    if not os.path.exists(band_file):
+                        print(f"Advertencia: No se encuentra la banda {band} en {band_file}")
+                        missing_bands.append(band)
+                
+                if missing_bands:
+                    print(f"Faltan bandas necesarias para calcular los índices: {', '.join(missing_bands)}")
+                    print("Omitiendo cálculo de índices para esta escena.")
+                    continue
+                
+                # Procesar los índices
+                results = process_selected_indices(scene_data['base_path'], selected_indices)
+                print(f"Índices calculados correctamente para {scene_data['scene_id']}")
+                
+                # Mostrar los archivos de índices generados
+                index_files = [f for f in os.listdir(scene_data['scene_dir']) if any(idx in f for idx in selected_indices)]
+                if index_files:
+                    print("Archivos de índices generados:")
+                    for idx_file in index_files:
+                        print(f"  - {idx_file}")
+                
+            except Exception as e:
+                import traceback
+                print(f"Error al procesar índices para {scene_data['scene_id']}: {str(e)}")
+                traceback.print_exc()
+    
+    return [d['scene_dir'] for d in downloaded_scenes]

@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Mar 18 00:00:32 2025
-
-@author: robin
-"""
 
 import os
 import json
@@ -237,6 +232,89 @@ class MapAppWindow(QMainWindow):
         # Crear y cargar el mapa
         self.html_file = self.create_interactive_map()
         self.web_view.load(QUrl.fromLocalFile(self.html_file))
+        
+    def show_coverage_analysis(self, file_path, features):
+        """
+        Muestra un análisis de cobertura del polígono
+        
+        Args:
+            file_path: Ruta al archivo GeoJSON o Shapefile
+            features: Lista de características (features) de Landsat
+        """
+        from coverage_checker import analyze_coverage, visualize_coverage
+        import os
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton
+        from PyQt5.QtGui import QPixmap
+        from PyQt5.QtCore import Qt
+        
+        # Analizar la cobertura
+        coverage_info = analyze_coverage(file_path, features)
+        
+        # Generar visualización
+        map_file = visualize_coverage(file_path, features)
+        
+        # Crear diálogo para mostrar resultados
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Análisis de Cobertura")
+        dialog.setMinimumSize(800, 600)
+        layout = QVBoxLayout(dialog)
+        
+        # Título
+        title = QLabel("Análisis de Cobertura del Polígono")
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(title)
+        
+        # Información de cobertura
+        info_label = QLabel(f"Cobertura total: {coverage_info['total_coverage_percent']:.2f}%")
+        layout.addWidget(info_label)
+        
+        # Escenas necesarias
+        scenes_text = QTextEdit()
+        scenes_text.setReadOnly(True)
+        
+        scenes_html = """
+        <h3>Escenas necesarias para cobertura completa</h3>
+        <table border="1" cellspacing="0" cellpadding="4" width="100%">
+        <tr bgcolor="#f0f0f0">
+            <th>ID</th>
+            <th>Path/Row</th>
+            <th>Fecha</th>
+            <th>Nubes</th>
+            <th>Cobertura</th>
+        </tr>
+        """
+        
+        for scene in coverage_info['scenes_needed']:
+            scenes_html += f"""
+            <tr>
+                <td>{scene['id']}</td>
+                <td>P{scene['path']}/R{scene['row']}</td>
+                <td>{scene['date']}</td>
+                <td>{scene['cloud_cover']}%</td>
+                <td>{scene['coverage_percent']:.2f}%</td>
+            </tr>
+            """
+        
+        scenes_html += "</table>"
+        scenes_text.setHtml(scenes_html)
+        layout.addWidget(scenes_text)
+        
+        # Visualización del mapa
+        if os.path.exists(map_file):
+            map_label = QLabel()
+            pixmap = QPixmap(map_file)
+            scaled_pixmap = pixmap.scaled(700, 500, Qt.KeepAspectRatio)
+            map_label.setPixmap(scaled_pixmap)
+            map_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(map_label)
+        
+        # Botón de cerrar
+        close_button = QPushButton("Cerrar")
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button)
+        
+        # Mostrar el diálogo
+        dialog.exec_()
            
     def add_tooltips(self):
         """Añade tooltips informativos a los widgets de la interfaz"""
@@ -1147,11 +1225,38 @@ class MapAppWindow(QMainWindow):
         try:
             import threading
             import procesar
+            from query import generate_landsat_query, fetch_stac_server
             
             def run_processing():
                 from PyQt5.QtCore import QTimer
                 try:
-                    success = procesar.process_data()  # o procesar.process_data()
+                    # Obtener las características (features) de Landsat
+                    features = None
+                    if file_to_use:
+                        # Generar consulta según la configuración
+                        query = generate_landsat_query(
+                            file_to_use,
+                            start_date=start_date,
+                            end_date=end_date,
+                            cloud_cover=self.cloud_cover_value,
+                            path=self.path_entry.text() if self.path_row_mode else None,
+                            row=self.row_entry.text() if self.path_row_mode else None
+                        )
+                        
+                        # Obtener imágenes que cumplen con los criterios
+                        features = fetch_stac_server(query)
+                        
+                        # Mostrar información sobre las imágenes encontradas
+                        if features:
+                            QTimer.singleShot(0, lambda: self.results_text.append(f"\nSe encontraron {len(features)} imágenes que cumplen con los criterios."))
+                            
+                            # Añadir el botón para analizar cobertura - NOVEDAD
+                            QTimer.singleShot(0, lambda: self.add_coverage_button(file_to_use, features))
+                        else:
+                            QTimer.singleShot(0, lambda: self.results_text.append(f"\nNo se encontraron imágenes que cumplan con los criterios especificados."))
+                    
+                    # Continuar con el procesamiento normal
+                    success = procesar.process_data()
                     
                     # Pequeña pausa para asegurar que los prints se completen
                     import time
@@ -1170,6 +1275,7 @@ class MapAppWindow(QMainWindow):
                     
                     # Actualizar UI
                     QTimer.singleShot(0, lambda: self.results_text.append(f"ERROR: {str(e)}"))
+            
             # Iniciar el procesamiento en segundo plano
             processing_thread = threading.Thread(target=run_processing)
             processing_thread.daemon = True
@@ -1179,3 +1285,61 @@ class MapAppWindow(QMainWindow):
             import traceback
             self.results_text.append(f"Error al iniciar procesamiento: {str(e)}")
             self.results_text.append(traceback.format_exc())
+     
+    def add_coverage_button(self, file_path, features):
+        """
+        Añade un botón para analizar la cobertura del polígono
+        
+        Args:
+            file_path: Ruta al archivo GeoJSON o Shapefile
+            features: Lista de características (features) de Landsat
+        """
+        from PyQt5.QtWidgets import QPushButton
+        
+        # Crear botón
+        coverage_button = QPushButton("Analizar Cobertura")
+        coverage_button.setFixedHeight(40)
+        coverage_button.setStyleSheet("font-weight: bold;")
+        
+        # Conectar el botón al método que muestra el análisis
+        coverage_button.clicked.connect(lambda: self.show_coverage_analysis(file_path, features))
+        
+        # Añadir el botón al texto de resultados
+        self.results_text.append("\n")
+        self.results_text.setUpdatesEnabled(False)  # Desactivar actualizaciones para evitar parpadeos
+        
+        # Añadir el botón como widget al QTextEdit
+        cursor = self.results_text.textCursor()
+        cursor.movePosition(cursor.End)
+        self.results_text.setTextCursor(cursor)
+        
+        # Insertar el botón
+        self.results_text.insertHtml("<div style='text-align:center; margin:10px 0;'></div>")
+        cursor = self.results_text.textCursor()
+        format = cursor.charFormat()
+        self.results_text.document().addResource(
+            1,  # QTextDocument.ImageResource
+            QUrl("temp://coverage_button"),
+            QVariant(coverage_button)
+        )
+        self.results_text.insertHtml(
+            "<img src='temp://coverage_button' />"
+        )
+        
+        self.results_text.setUpdatesEnabled(True)  # Reactivar actualizaciones
+        
+        # También añadir un botón convencional debajo del QTextEdit
+        coverage_button_real = QPushButton("Analizar Cobertura")
+        coverage_button_real.setFixedHeight(40)
+        coverage_button_real.setStyleSheet("font-weight: bold;")
+        coverage_button_real.clicked.connect(lambda: self.show_coverage_analysis(file_path, features))
+        
+        # Encontrar y agregar al layout bajo el QTextEdit
+        results_frame = self.findChild(QGroupBox, "Resultados")
+        if results_frame:
+            results_layout = results_frame.layout()
+            results_layout.addWidget(coverage_button_real)
+        else:
+            # Si no encontramos el GroupBox por su título, intentamos añadirlo directamente
+            self.control_panel_layout.addWidget(coverage_button_real)
+                
