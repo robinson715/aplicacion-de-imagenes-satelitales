@@ -10,6 +10,7 @@ from query import generate_landsat_query, fetch_stac_server
 from downloader import download_images, download_selective_bands
 from indices import process_selected_indices
 from cobertura import analyze_coverage, visualize_coverage, download_optimal_scenes
+from mosaico import obtener_escenas_por_banda,obtener_cloud_cover_de_metadatos,crear_mosaico_por_banda,recortar_mosaico_con_poligono,procesar_bandas_a_mosaicos_y_recortes,limpiar_archivos_temporales
 
 def determine_required_bands(selected_indices):
    
@@ -164,6 +165,58 @@ def process_data():
                 
                 if downloaded_files:
                     print(f"\nSe descargaron {len(downloaded_files)} escenas con éxito")
+                    
+                    # NUEVA SECCIÓN: Preguntar al usuario si desea generar mosaicos y recortes
+                    mosaico_input = input("\n¿Generar mosaicos por banda y recortes del polígono? (s/n): ")
+                    
+                    if mosaico_input.lower() == 's':
+                        try:
+                            # Importar el módulo de mosaicos con manejo detallado de errores
+                            print("Intentando importar mosaico...")
+                            #import mosaico
+                            print("¡Mosaico importado correctamente!")
+                            
+                            print("\nGenerando mosaicos y recortes...")
+                            
+                            # Definir rutas de salida
+                            output_mosaicos = "data/mosaicos"
+                            output_recortes = "data/recortes"
+                            os.makedirs(output_mosaicos, exist_ok=True)
+                            os.makedirs(output_recortes, exist_ok=True)
+                            
+                            # Llamar a la función principal de mosaicos - NOMBRE CORREGIDO
+                            resultados = procesar_bandas_a_mosaicos_y_recortes(
+                                download_path,
+                                output_mosaicos,
+                                output_recortes,
+                                file_path
+                            )
+                            
+                            if resultados:
+                                print("\nMosaicos y recortes generados exitosamente:")
+                                
+                                # Mostrar lista de archivos generados
+                                print("\nMosaicos generados:")
+                                for banda, ruta in resultados["mosaicos"].items():
+                                    print(f"  {banda}: {os.path.basename(ruta)}")
+                                
+                                print("\nRecortes generados:")
+                                for banda, ruta in resultados["recortes"].items():
+                                    if ruta is not None:
+                                        print(f"  {banda}: {os.path.basename(ruta)}")
+                                    else:
+                                        print(f"  {banda}: Error - No se generó recorte")
+                            else:
+                                print("\nError: No se pudieron generar los mosaicos y recortes")
+                                
+                        except ImportError:
+                            print("\nError: No se encontró el módulo mosaico.py")
+                            print("Asegúrate de que el archivo mosaico.py está en el mismo directorio que procesar.py")
+                        
+                        except Exception as e:
+                            print(f"\nError al generar mosaicos y recortes: {str(e)}")
+                            traceback.print_exc()
+                    
                     return True
                 else:
                     print("Error al descargar las escenas necesarias")

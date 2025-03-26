@@ -5,6 +5,8 @@ Módulo para el cálculo de índices radiométricos a partir de imágenes Landsa
 
 import rasterio
 import numpy as np
+import os
+
 
 def process_selected_indices(base_path, selected_indices):
     
@@ -61,14 +63,28 @@ def process_selected_indices(base_path, selected_indices):
     for name, data in results.items():
         output_file = f"{base_path}_{name}.TIF"
         print(f"Guardando índice {name} en {output_file}")
-        
-        # Guardar como GeoTIFF con metadatos de la imagen original
-        with rasterio.open(f"{base_path}_B4.TIF") as src:
-            profile = src.profile
-            profile.update(dtype=rasterio.float32)
-            
-            with rasterio.open(output_file, 'w', **profile) as dst:
-                dst.write(data.astype(rasterio.float32), 1)
+        from procesar import determine_required_bands
+
+    # Encontrar la primera banda disponible para obtener el perfil
+    profile = None
+    ref_bands = determine_required_bands(selected_indices)  # Reutilizar la función existente
+    
+    # Intentar abrir una de las bandas para obtener su perfil
+    for band in ref_bands:
+        try:
+            band_path = f"{base_path}_{band}.TIF"
+            if os.path.exists(band_path):
+                with rasterio.open(band_path) as src:
+                    profile = src.profile.copy()
+                    profile.update(dtype=rasterio.float32)
+                print(f"Usando {band} como referencia para metadatos")
+                break
+        except Exception as e:
+            continue
+    
+    # Si no se pudo obtener un perfil, mostrar un error claro
+    if not profile:
+        raise ValueError("No se encontró ninguna banda de referencia para obtener metadatos")
     
     return results
 

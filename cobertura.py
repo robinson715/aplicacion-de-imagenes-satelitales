@@ -759,7 +759,8 @@ def download_optimal_scenes(polygon_file, features, download_path='data/download
             print(f"No se encontró la característica correspondiente a {scene_id}")
     
     # Si hay índices seleccionados, procesarlos para cada escena
-    if selected_indices and downloaded_scenes:
+        """
+   if selected_indices and downloaded_scenes:
         print("\nCalculando índices para cada escena descargada...")
         from indices import process_selected_indices
         
@@ -795,5 +796,5 @@ def download_optimal_scenes(polygon_file, features, download_path='data/download
                 import traceback
                 print(f"Error al procesar índices para {scene_data['scene_id']}: {str(e)}")
                 traceback.print_exc()
-    
+                """
     return [d['scene_dir'] for d in downloaded_scenes]
