@@ -11,6 +11,7 @@ from downloader import download_images, download_selective_bands
 from indices import process_selected_indices
 from cobertura import analyze_coverage, visualize_coverage, download_optimal_scenes
 from mosaico import obtener_escenas_por_banda,obtener_cloud_cover_de_metadatos,crear_mosaico_por_banda,recortar_mosaico_con_poligono,procesar_bandas_a_mosaicos_y_recortes,limpiar_archivos_temporales
+from indices import process_indices_from_cutouts_wrapper
 
 def determine_required_bands(selected_indices):
    
@@ -206,8 +207,29 @@ def process_data():
                                         print(f"  {banda}: {os.path.basename(ruta)}")
                                     else:
                                         print(f"  {banda}: Error - No se generó recorte")
+                            
+                                
+                                # NUEVO: Preguntar al usuario si desea calcular los índices a partir de los recortes
+                                if selected_indices and len(resultados["recortes"]) > 0:
+                                    indices_input = input("\n¿Calcular los índices seleccionados a partir de los recortes? (s/n): ")
+                                    
+                                    if indices_input.lower() == 's':
+                                        print("\nCalculando índices a partir de los recortes...")
+                                        
+                                        # Llamar a la función para procesar índices desde recortes
+                                        indices_success = process_indices_from_cutouts_wrapper(output_recortes, selected_indices)
+                                        
+                                        if indices_success:
+                                            print("\nÍndices calculados y visualizados correctamente.")
+                                            print("Las imágenes y archivos de los índices están disponibles en la carpeta 'data/indices'")
+                                        else:
+                                            print("\nError al calcular los índices. Revisa los mensajes anteriores para más detalles.")
+                                elif selected_indices:
+                                    print("\nNo se generaron suficientes recortes para calcular los índices seleccionados.")
+                                else:
+                                    print("\nNo hay índices seleccionados para calcular.")
                             else:
-                                print("\nError: No se pudieron generar los mosaicos y recortes")
+                                print("\nNo se pudieron generar los mosaicos y recortes.")    
                                 
                         except ImportError:
                             print("\nError: No se encontró el módulo mosaico.py")
