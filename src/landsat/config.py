@@ -1,0 +1,7 @@
+# -*- coding: utf-8 -*-
+"""
+Archivo de configuración para credenciales USGS
+"""
+
+USGS_USERNAME = "robin715"
+USGS_PASSWORD = "holarobinson"
